@@ -1,5 +1,4 @@
 # coding:utf-8
-__author__ = 'zfh'
 import cPickle
 import os
 from copy import copy
@@ -33,6 +32,22 @@ def makeFunc(inList, outList, updates):
     )
 
 
+# pad的顺序依次：上下左右
+def pad2d(X, padding=(0, 0, 0, 0)):
+    inputShape = X.shape
+    outputShape = (inputShape[0],
+                   inputShape[1],
+                   inputShape[2] + padding[0] + padding[1],
+                   inputShape[3] + padding[2] + padding[3])
+    output = np.zeros(outputShape)
+    indices = (slice(None),
+               slice(None),
+               slice(padding[0], inputShape[2] + padding[0]),  # 上下
+               slice(padding[2], inputShape[3] + padding[2]))  # 左右
+    output[indices] = X
+    return output
+
+
 '''
 网络结构中需要计算的参量
 '''
@@ -40,10 +55,92 @@ def makeFunc(inList, outList, updates):
 
 # 使用GPU时误差的计算，输入都必须是TensorType
 def eqs(yProb, y):
-    assert yProb.ndim == 2
-    assert y.ndim == 1
-    yProb = T.argmax(yProb, axis=1)
+    if yProb.ndim == 2:
+        yProb = T.argmax(yProb, axis=1)
+    if y.ndim == 2:
+        y = T.argmax(y, axis=1)
     return T.sum(T.eq(yProb, y))  # 返回相等元素个数
+
+
+def accuracy(yProb, y):
+    assert yProb.ndim == 2
+    assert y.ndim == 2
+    yProb = T.argmax(yProb, axis=1)
+    y = T.argmax(y, axis=1)
+    return T.mean(T.eq(yProb, y))
+
+
+def conv_out_shape(inputShape, filterShape, pad, stride):
+    batch, channel, mapRow, mapCol = inputShape
+    channelout, channelin, filterRow, filterCol = filterShape
+    assert channel == channelin
+    if isinstance(pad, tuple):
+        rowPad, colPad = pad
+    else:
+        rowPad = colPad = pad
+    if isinstance(stride, tuple):
+        rowStride, colStride = stride
+    else:
+        rowStride = colStride = stride
+    mapRow += 2 * rowPad
+    mapCol += 2 * colPad
+    outRow, outCol = (mapRow - filterRow) // rowStride + 1, (mapCol - filterCol) // colStride + 1
+    return batch, channelout, outRow, outCol
+
+
+def patchIndex(XShape, filterShape, stride=1):
+    nSample, nMap, mapRow, mapCol = XShape
+    _, _, filterRow, filterCol = filterShape
+    rowStride, colStride = stride
+    _, _, outRow, outCol = conv_out_shape(XShape, filterShape, pad=0, stride=stride)
+    block1 = np.arange(filterCol, dtype='int32')
+    block2 = []
+    for i in xrange(filterRow):
+        block2.append(block1 + i * mapCol)
+    block2 = np.hstack(block2)
+    del block1
+    block3 = []
+    for i in xrange(outCol):
+        block3.append(block2 + i * colStride)
+    block3 = np.hstack(block3)
+    del block2
+    block4 = []
+    for i in xrange(outRow):
+        block4.append(block3 + i * mapCol * rowStride)
+    block4 = np.hstack(block4)
+    del block3
+    out = []
+    for i in xrange(nSample * nMap):
+        out.append(block4 + i * mapRow * mapCol)
+    return np.hstack(out).astype('int32')
+
+
+# 内存位置出错！
+class Im2ColOp(object):
+    def __init__(self, psize, stride):
+        # psize: filter size  stride: step size
+        self._psize = psize
+        self._stride = stride
+
+    def _get_new_shape(self, features):
+        # Gets the new shape of the im2col operation.
+        num, height, width, channels = features.shape
+        return (num,
+                (height - self._psize) / self._stride + 1,
+                (width - self._psize) / self._stride + 1,
+                channels * self._psize * self._psize)
+
+    def transform(self, features):
+        from decaf.layers.cpp import wrapper
+        if features.ndim != 4:
+            raise ValueError('Input features should be 4-dimensional.')
+        # transpose from (num, channels, height, width) to (num, height, width, channels)
+        features = features.transpose((0, 2, 3, 1))
+        out_dtype = features.dtype
+        out_shape = self._get_new_shape(features)
+        out = np.empty(out_shape, out_dtype)
+        wrapper.im2col_forward(features, out, self._psize, self._stride)
+        return out
 
 
 '''
