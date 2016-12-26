@@ -6,7 +6,8 @@ import scipy.io as sio
 from scipy.misc import imread, imshow
 from PIL import Image
 
-datasets_dir = '/home/' + getpass.getuser() + '/dataset'
+username = 'zhufenghao'
+datasets_dir = '/home/' + username + '/dataset'
 
 
 def one_hot(x, n):

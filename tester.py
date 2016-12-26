@@ -579,10 +579,10 @@ import myUtils
 #     bias = np.random.uniform(low=-ranges, high=ranges, size=hidden_unit)
 #     return filters, bias
 
-# x = 19
-# for i in range(10):
-#     x = int(float(x) / 1.414)
-#     print x
+x = 22
+for i in range(10):
+    x = int(float(x) / 2.1)
+    print x
 
 # x=np.random.rand(10,5)
 # c=np.cov(x,rowvar=0)
@@ -706,3 +706,78 @@ import myUtils
 # D, V = np.linalg.eig(cov)
 # P = V.dot(np.diag(np.sqrt(1 / (D + 0.1)))).dot(V.T)
 # print D,V,P
+
+# def _get_block_idx(blockr, blockc,orows, ocols):
+#     nr = int(np.ceil(float(orows) / blockr))
+#     nc = int(np.ceil(float(ocols) / blockc))
+#     idx = []
+#     for row in xrange(nr):
+#         row_bias = row * blockr
+#         for col in xrange(nc):
+#             col_bias = col * blockc
+#             base = np.arange(blockc) if col_bias + blockc < ocols else np.arange(ocols - col_bias)
+#             block_row = blockr if row_bias + blockr < orows else orows - row_bias
+#             one_block = []
+#             for br in xrange(block_row):
+#                 one_row = base + orows * br + col_bias + row_bias * orows
+#                 one_block = np.concatenate([one_block, one_row]) if len(one_block) != 0 else one_row
+#             idx.append(one_block)
+#     return idx
+#
+# def join_result(blocks, blockr, blockc, orows, ocols):
+#     batches = blocks[0].shape[0] / (blockr * blockc)
+#     channels = blocks[0].shape[1]
+#     nr = int(np.ceil(float(orows) / blockr))
+#     nc = int(np.ceil(float(ocols) / blockc))
+#     output = []
+#     for row in xrange(nr):
+#         one_row = []
+#         for col in xrange(nc):
+#             one_block = blocks.pop(0)
+#             if col == nc - 1 and row != nr - 1:
+#                 one_block = one_block.reshape((batches, blockr, -1, channels))
+#             elif row == nr - 1 and col != nc - 1:
+#                 one_block = one_block.reshape((batches, -1, blockc, channels))
+#             elif row == nr - 1 and col == nc - 1:
+#                 rsize = orows % blockr if orows % blockr else blockr
+#                 csize = ocols % blockc if ocols % blockc else blockc
+#                 one_block = one_block.reshape((batches, rsize, csize, channels))
+#             else:
+#                 one_block = one_block.reshape((batches, blockr, blockc, channels))
+#             one_block = one_block.transpose((0, 3, 1, 2))
+#             one_row = np.concatenate([one_row, one_block], axis=3) if len(one_row) != 0 else one_block
+#         output = np.concatenate([output, one_row], axis=2) if len(output) != 0 else one_row
+#     return output
+#
+# idx=_get_block_idx(5,5,10,10)
+# print idx
+# idx=map(lambda x:x[:,None],idx)
+# print join_result(idx,5,5, 10,10)
+
+
+# def get_rand_idx(n_rand, orows, ocols):
+#     size = orows * ocols
+#     split_size = int(round(float(size) / n_rand))
+#     all_idx = np.random.permutation(size)
+#     split_range = [split_size + split_size * i for i in xrange(n_rand - 1)]
+#     split_idx = np.split(all_idx, split_range)
+#     return split_idx
+#
+#
+# print get_rand_idx(10, 7, 7)
+
+# def get_neib_idx(neibr, neibc, orows, ocols):
+#     idx = []
+#     for i in xrange(neibr):
+#         row_idx = np.arange(i, orows, neibr)
+#         for j in xrange(neibc):
+#             col_idx = np.arange(j, ocols, neibc)
+#             one_neib = []
+#             for row_step in row_idx:
+#                 one_row = col_idx + row_step * orows
+#                 one_neib = np.concatenate([one_neib, one_row]) if len(one_neib) != 0 else one_row
+#             idx.append(one_neib)
+#     return idx
+#
+# print np.arange(100).reshape((10,10)),get_neib_idx(4,4,10,10)
+

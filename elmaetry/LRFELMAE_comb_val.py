@@ -5,7 +5,7 @@
 bugs: whiten要减去同一个均值
 偏置的大小一定要小于矩阵值,根据矩阵值的最大最小进行缩放,不做正交化
 激活前的归一化
-cccp输入时的归一化
+cccp转化为2维时对通道归一化
 归一化对所有通道还是每个通道单独
 elm中求beta全部直接计算,不使用二次正则项;分类器中求beta容易有奇异值,要使用二次正则项
 ------
@@ -158,7 +158,7 @@ def elu(X, alpha=1):
 
 def add_noise_decomp(X, fn, arg):
     size = X.shape[0]
-    batchSize = size / 100
+    batchSize = size / 10
     startRange = range(0, size - batchSize + 1, batchSize)
     endRange = range(batchSize, size + 1, batchSize)
     if size % batchSize != 0:
@@ -282,9 +282,9 @@ def norm2d(X, reg=0.1):
     for start, end in zip(startRange, endRange):
         Xtmp = X[start:end]
         mean = Xtmp.mean(axis=1)
-        Xtmp -= mean[:, np.newaxis]
+        Xtmp -= mean[:, None]
         normalizer = np.sqrt((Xtmp ** 2).mean(axis=1) + reg)
-        Xtmp /= normalizer[:, np.newaxis]
+        Xtmp /= normalizer[:, None]
         X[start:end] = Xtmp
     return X
 
@@ -298,27 +298,50 @@ def norm4d(X, reg=0.1):
     return X
 
 
-# def norm2dglobal(X, mean=None, normalizer=None, reg=0.1):
-#     if mean is None or normalizer is None:
-#         mean = X.mean(axis=0)
-#         normalizer = 0.  # 分解求方差
-#         size = X.shape[0]
-#         batchSize = size // 10
-#         startRange = range(0, size - batchSize + 1, batchSize)
-#         endRange = range(batchSize, size + 1, batchSize)
-#         if size % batchSize != 0:
-#             startRange.append(size - size % batchSize)
-#             endRange.append(size)
-#         for start, end in zip(startRange, endRange):
-#             Xtmp = X[start:end]
-#             Xtmp -= mean[np.newaxis, :]  # no copy,原始X的相应元素也被改变
-#             normalizer += (Xtmp ** 2).sum(axis=0) / size
-#         normalizer = np.sqrt(normalizer + reg)
-#         X /= normalizer[np.newaxis, :]
-#         return X, mean, normalizer
-#     else:
-#         X = (X - mean[np.newaxis, :]) / normalizer[np.newaxis, :]
-#         return X
+def norm2dglobal(X, mean=None, normalizer=None, reg=0.1):
+    if mean is None or normalizer is None:
+        mean = X.mean(axis=0)
+        normalizer = 0.  # 分解求方差
+        size = X.shape[0]
+        batchSize = size // 10
+        startRange = range(0, size - batchSize + 1, batchSize)
+        endRange = range(batchSize, size + 1, batchSize)
+        if size % batchSize != 0:
+            startRange.append(size - size % batchSize)
+            endRange.append(size)
+        for start, end in zip(startRange, endRange):
+            Xtmp = X[start:end]
+            Xtmp -= mean[None, :]  # no copy,原始X的相应元素也被改变
+            normalizer += (Xtmp ** 2).sum(axis=0) / size
+        normalizer = np.sqrt(normalizer + reg)
+        X /= normalizer[None, :]
+        return X, mean, normalizer
+    else:
+        X = (X - mean[None, :]) / normalizer[None, :]
+        return X
+
+
+def norm4dglobal(X, mean=None, normalizer=None, reg=0.1):
+    if mean is None or normalizer is None:
+        mean = X.mean(axis=(0, 2, 3))
+        normalizer = 0.  # 分解求方差
+        size = X.shape[0]
+        batchSize = size // 10
+        startRange = range(0, size - batchSize + 1, batchSize)
+        endRange = range(batchSize, size + 1, batchSize)
+        if size % batchSize != 0:
+            startRange.append(size - size % batchSize)
+            endRange.append(size)
+        for start, end in zip(startRange, endRange):
+            Xtmp = X[start:end]
+            Xtmp -= mean[None, :, None, None]  # no copy,原始X的相应元素也被改变
+            normalizer += (Xtmp ** 2).sum(axis=(0, 2, 3)) / size
+        normalizer = np.sqrt(normalizer + reg)
+        X /= normalizer[None, :, None, None]
+        return X, mean, normalizer
+    else:
+        X = (X - mean[None, :, None, None]) / normalizer[None, :, None, None]
+        return X
 
 
 def whiten2d(X, mean=None, P=None):
@@ -379,8 +402,8 @@ class ELMAELayer(Layer):
     def _get_beta(self, oneChannel, bias_scale=25):
         assert oneChannel.ndim == 4 and oneChannel.shape[1] == 1  # ELMAE的输入通道数必须为1,即只有一张特征图
         # 生成随机正交滤波器
-        filters, bias = normal_random(input_unit=self.filter_size ** 2, hidden_unit=self.n_hidden)
-        filters = orthonormalize(filters)  # 正交后的幅度在-1~+1之间
+        W, b = normal_random(input_unit=self.filter_size ** 2, hidden_unit=self.n_hidden)
+        W = orthonormalize(W)  # 正交后的幅度在-1~+1之间
         # 卷积前向输出,和取patch时一致
         patches = im2col(oneChannel, self.filter_size, stride=self.stride_, pad=self.pad_)
         del oneChannel
@@ -394,11 +417,11 @@ class ELMAELayer(Layer):
         # noisePatch = add_mn_row(patches, p=0.25)
         # noisePatch = add_sp(patches, p=0.25)
         # noisePatch = add_gs(patches, p=0.25)
-        hiddens = np.dot(noise_patches, filters)
+        hiddens = np.dot(noise_patches, W)
         del noise_patches
         hmax, hmin = np.max(hiddens, axis=0), np.min(hiddens, axis=0)
         scale = (hmax - hmin) / (2 * bias_scale)
-        hiddens += bias * scale
+        hiddens += b * scale
         hiddens = relu(hiddens)
         # 计算beta
         beta = compute_beta_direct(hiddens, patches)
@@ -517,18 +540,12 @@ class FPLayer(Layer):
 
 
 class BNLayer(Layer):
-    def __init__(self):
-        self.mean = None
-        self.var = None
+    def get_train_output_for(self, inputX, regularization=0.1):
+        inputX, self.mean, self.norm = norm4dglobal(inputX, regularization)
+        return inputX
 
-    def get_train_output_for(self, inputX, regularization=1e-5):
-        # 每个特征在整个训练集上归一化
-        self.mean = np.mean(inputX, axis=(0, 2, 3), keepdims=True)
-        self.var = np.var(inputX, axis=(0, 2, 3), keepdims=True)
-        return (inputX - self.mean) / np.sqrt(self.var + regularization)
-
-    def get_test_output_for(self, inputX, regularization=1e-5):
-        return (inputX - self.mean) / np.sqrt(self.var + regularization)
+    def get_test_output_for(self, inputX, regularization=0.1):
+        return norm4dglobal(inputX, self.mean, self.norm, regularization)
 
 
 class GCNLayer(Layer):
@@ -587,11 +604,9 @@ class CCCPLayer(Layer):
         self.noise_level = noise_level
 
     def _get_beta(self, inputX, bias_scale=25):
-        assert inputX.ndim == 4
-        batches, channels, rows, cols = inputX.shape
-        W, b = normal_random(input_unit=channels, hidden_unit=self.n_out)
+        assert inputX.ndim == 2
+        W, b = normal_random(input_unit=inputX.shape[1], hidden_unit=self.n_out)
         W = orthonormalize(W)
-        inputX = inputX.transpose((0, 2, 3, 1)).reshape((-1, channels))
         # 在转化的矩阵上加噪
         noiseX = np.copy(inputX)
         noiseX = add_noise_decomp(noiseX, add_mn, self.noise_level)
@@ -608,35 +623,41 @@ class CCCPLayer(Layer):
         return beta
 
     def get_train_output_for(self, inputX):
+        myUtils.visual.save_map(inputX[[10, 100, 1000]], dir_name, 'cccpin')
         batches, n_in, rows, cols = inputX.shape
-        self.beta = self._get_beta(inputX)
         inputX = inputX.transpose((0, 2, 3, 1)).reshape((-1, n_in))
-        outputX = np.dot(inputX, self.beta)
-        del inputX
-        outputX = outputX.reshape((batches, rows, cols, -1)).transpose((0, 3, 1, 2))
-        myUtils.visual.save_map(outputX[[10, 100, 1000]], dir_name, 'cccpraw')
+        ##################
+        inputX = norm2d(inputX)
+        ##################
+        self.beta = self._get_beta(inputX)
+        inputX = np.dot(inputX, self.beta)
+        inputX = inputX.reshape((batches, rows, cols, -1)).transpose((0, 3, 1, 2))
+        myUtils.visual.save_map(inputX[[10, 100, 1000]], dir_name, 'cccpraw')
         # 归一化
-        outputX = norm4d(outputX)
-        myUtils.visual.save_map(outputX[[10, 100, 1000]], dir_name, 'cccpnorm')
+        inputX = norm4d(inputX)
+        myUtils.visual.save_map(inputX[[10, 100, 1000]], dir_name, 'cccpnorm')
         # 激活
-        outputX = relu(outputX)
-        myUtils.visual.save_map(outputX[[10, 100, 1000]], dir_name, 'cccprelu')
-        return outputX
+        inputX = relu(inputX)
+        myUtils.visual.save_map(inputX[[10, 100, 1000]], dir_name, 'cccprelu')
+        return inputX
 
     def get_test_output_for(self, inputX):
+        myUtils.visual.save_map(inputX[[10, 100, 1000]], dir_name, 'cccpinte')
         batches, n_in, rows, cols = inputX.shape
         inputX = inputX.transpose((0, 2, 3, 1)).reshape((-1, n_in))
-        outputX = np.dot(inputX, self.beta)
-        del inputX
-        outputX = outputX.reshape((batches, rows, cols, -1)).transpose((0, 3, 1, 2))
-        myUtils.visual.save_map(outputX[[10, 100, 1000]], dir_name, 'cccprawte')
+        ##################
+        inputX = norm2d(inputX)
+        ##################
+        inputX = np.dot(inputX, self.beta)
+        inputX = inputX.reshape((batches, rows, cols, -1)).transpose((0, 3, 1, 2))
+        myUtils.visual.save_map(inputX[[10, 100, 1000]], dir_name, 'cccprawte')
         # 归一化
-        outputX = norm4d(outputX)
-        myUtils.visual.save_map(outputX[[10, 100, 1000]], dir_name, 'cccpnormte')
+        inputX = norm4d(inputX)
+        myUtils.visual.save_map(inputX[[10, 100, 1000]], dir_name, 'cccpnormte')
         # 激活
-        outputX = relu(outputX)
-        myUtils.visual.save_map(outputX[[10, 100, 1000]], dir_name, 'cccprelute')
-        return outputX
+        inputX = relu(inputX)
+        myUtils.visual.save_map(inputX[[10, 100, 1000]], dir_name, 'cccprelute')
+        return inputX
 
 
 class Classifier(Layer):
@@ -741,7 +762,7 @@ class Classifier_cv(object):
                 if acc > optacc:
                     optacc = acc
                     optC = C
-                print '\ttrain opt', optC, optacc
+            print 'train opt', optC, optacc
 
     def test_cv(self, inputX, inputy):
         optacc = 0.
@@ -752,7 +773,7 @@ class Classifier_cv(object):
             if acc > optacc:
                 optacc = acc
                 optC = C
-            print '\ttest opt', optC, optacc
+            print 'test opt', optC, optacc
 
 
 class LRFELMAE(object):
@@ -761,23 +782,23 @@ class LRFELMAE(object):
 
     def _build(self):
         net = OrderedDict()
-        net['gcn0'] = GCNLayer()
+        # net['gcn0'] = GCNLayer()
         # layer1
-        net['layer1'] = ELMAELayer(C=self.C, n_hidden=16, filter_size=6, pad=0, stride=1,
+        net['layer1'] = ELMAELayer(C=self.C, n_hidden=17, filter_size=6, pad=0, stride=1,
                                    pad_=None, stride_=2, noise_level=0.15)
         net['pool1'] = PoolLayer(pool_size=(2, 2), mode='max')
         # net['fmp1'] = FPLayer(pool_ratio=1.414, mode='max')
         # net['gcn11'] = GCNLayer()
         # net['cccp1'] = CCCPLayer(C=self.C, n_out=16, noise_level=0.25)
-        net['gcn12'] = GCNLayer()
+        # net['gcn12'] = GCNLayer()
         # layer2
-        net['layer2'] = ELMAELayer(C=self.C, n_hidden=16, filter_size=6, pad=0, stride=1,
+        net['layer2'] = ELMAELayer(C=self.C, n_hidden=17, filter_size=6, pad=0, stride=1,
                                    pad_=None, stride_=1, noise_level=0.15)
         net['pool2'] = PoolLayer(pool_size=(2, 2), mode='max')
         # net['fmp2'] = FPLayer(pool_ratio=1.414, mode='max')
         # net['gcn21'] = GCNLayer()
         # net['cccp2'] = CCCPLayer(C=self.C, n_out=256, noise_level=0.25)
-        net['gcn22'] = GCNLayer()
+        # net['gcn22'] = GCNLayer()
         # layer3
         # net['layer3'] = ELMAELayer(C=self.C, n_hidden=64, filter_size=5, pad=2, stride=1,
         #                            pad_=None, stride_=1, noise_level=0.25)

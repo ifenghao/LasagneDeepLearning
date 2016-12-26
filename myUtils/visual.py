@@ -1,9 +1,10 @@
 # coding:utf-8
 import numpy as np
 from matplotlib import pylab
-import os, getpass
+import os
 
 img_count = 0
+username = 'zhufenghao'
 
 
 def addPad(map2D, padWidth):
@@ -28,7 +29,7 @@ def squareStack(map3D):
 
 def show_beta(beta):
     size, channels = beta.shape
-    beta = beta.T.reshape((channels, np.sqrt(size), np.sqrt(size)))
+    beta = beta.T.reshape((channels, int(np.sqrt(size)), int(np.sqrt(size))))
     beta = squareStack(beta)
     pylab.figure()
     pylab.gray()
@@ -38,13 +39,32 @@ def show_beta(beta):
 
 def save_beta(beta, dir, name):
     global img_count
-    save_path = os.path.join('/home', getpass.getuser(), 'images', dir)
+    save_path = os.path.join('/home', username, 'images', dir)
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     pic_path = os.path.join(save_path, str(img_count) + name + '.png')
     img_count += 1
     size, channels = beta.shape
-    beta = beta.T.reshape((channels, np.sqrt(size), np.sqrt(size)))
+    beta = beta.T.reshape((channels, int(np.sqrt(size)), int(np.sqrt(size))))
+    pylab.figure()
+    pylab.gray()
+    pylab.imshow(squareStack(beta))
+    pylab.savefig(pic_path)
+    pylab.close()
+
+
+def save_beta_mch(beta, mch, dir, name):
+    global img_count
+    save_path = os.path.join('/home', username, 'images', dir)
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    pic_path = os.path.join(save_path, str(img_count) + name + '.png')
+    img_count += 1
+    size, channels = beta.shape
+    size /= mch
+    beta = np.split(beta.T, mch, axis=1)
+    beta = np.concatenate(beta, axis=0)
+    beta = beta.reshape((mch * channels, int(np.sqrt(size)), int(np.sqrt(size))))
     pylab.figure()
     pylab.gray()
     pylab.imshow(squareStack(beta))
@@ -64,7 +84,7 @@ def show_map(map):
 
 def save_map(map, dir, name):
     global img_count
-    save_path = os.path.join('/home', getpass.getuser(), 'images', dir)
+    save_path = os.path.join('/home', username, 'images', dir)
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     pic_path = os.path.join(save_path, str(img_count) + name + '.png')

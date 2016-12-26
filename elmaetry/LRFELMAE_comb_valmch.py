@@ -1,8 +1,9 @@
 # coding:utf-8
 '''
 基于ELM的局部感知自编码器
-仿照多通道的卷积层,将上一层所有通道卷积后的特征图求和,得到下一层的一张特征图
-归一化为每个样本计算,计算beta时归一化,激活前归一化
+主要应用于cifar
+对于3通道的RGB图像,将3通道的patch串联起来
+对于之后的特征图,选取一定通道的patch串联起来
 '''
 
 import gc
@@ -19,7 +20,7 @@ from copy import deepcopy
 import myUtils
 
 compute_beta_val_times = 4
-dir_name = 'large3a'
+dir_name = 'val'
 
 
 def compute_beta(Hmat, Tmat, C):
@@ -151,7 +152,7 @@ def elu(X, alpha=1):
 
 def add_noise_decomp(X, fn, arg):
     size = X.shape[0]
-    batchSize = size / 100
+    batchSize = size / 10
     startRange = range(0, size - batchSize + 1, batchSize)
     endRange = range(batchSize, size + 1, batchSize)
     if size % batchSize != 0:
@@ -282,7 +283,7 @@ def norm2d(X, reg=0.1):
     return X
 
 
-# 对每一个样本的每个通道元素去均值归一化
+# 对每一个样本的所有通道元素去均值归一化
 def norm4d(X, reg=0.1):
     raw_shape = X.shape
     X = X.reshape((X.shape[0], -1))
@@ -358,9 +359,8 @@ class Layer(object):
         raise NotImplementedError
 
 
-class ELMAEPoolLayer(Layer):
-    def __init__(self, C, n_hidden, filter_size, pad, stride, pad_, stride_, noise_level,
-                 pool_type, pool_size, mode, cccp_out, cccp_noise_level):
+class ELMAELayer(Layer):
+    def __init__(self, C, n_hidden, filter_size, pad, stride, pad_, stride_, noise_level):
         self.C = C
         self.n_hidden = n_hidden
         self.filter_size = filter_size
@@ -369,27 +369,15 @@ class ELMAEPoolLayer(Layer):
         self.stride_ = stride_
         self.pad_ = pad_
         self.noise_level = noise_level
-        self.pool_type = pool_type
-        self.pool_size = pool_size
-        self.mode = mode
-        self.cccp_out = cccp_out
-        self.cccp_noise_level = cccp_noise_level
 
-    def _get_beta(self, oneChannel, min_patch=25, bias_scale=25):
+    def _get_beta(self, oneChannel, bias_scale=25):
         assert oneChannel.ndim == 4 and oneChannel.shape[1] == 1  # ELMAE的输入通道数必须为1,即只有一张特征图
         # 生成随机正交滤波器
-        filters, bias = normal_random(input_unit=self.filter_size ** 2, hidden_unit=self.n_hidden)
-        filters = orthonormalize(filters)
+        W, b = normal_random(input_unit=self.filter_size ** 2, hidden_unit=self.n_hidden)
+        W = orthonormalize(W)  # 正交后的幅度在-1~+1之间
         # 卷积前向输出,和取patch时一致
         patches = im2col(oneChannel, self.filter_size, stride=self.stride_, pad=self.pad_)
         del oneChannel
-        # batches = oneChannel.shape[0]
-        # n_patch = patches.shape[0] / batches
-        # n_select = n_patch if n_patch < min_patch else min_patch  # 每张图片选择的patch数量
-        # index = [np.random.permutation(n_patch)[:n_select] + i * n_patch for i in xrange(batches)]
-        # index = np.hstack(index)
-        # patches = patches[index]
-        # gc.collect()
         ##########################
         patches = norm2d(patches)
         # patches, self.mean1, self.P1 = whiten2d(patches)
@@ -400,11 +388,11 @@ class ELMAEPoolLayer(Layer):
         # noisePatch = add_mn_row(patches, p=0.25)
         # noisePatch = add_sp(patches, p=0.25)
         # noisePatch = add_gs(patches, p=0.25)
-        hiddens = np.dot(noise_patches, filters)
+        hiddens = np.dot(noise_patches, W)
         del noise_patches
         hmax, hmin = np.max(hiddens, axis=0), np.min(hiddens, axis=0)
         scale = (hmax - hmin) / (2 * bias_scale)
-        hiddens += bias * scale
+        hiddens += b * scale
         hiddens = relu(hiddens)
         # 计算beta
         beta = compute_beta_direct(hiddens, patches)
@@ -416,14 +404,7 @@ class ELMAEPoolLayer(Layer):
         _, _, orows, ocols = myUtils.basic.conv_out_shape((batches, channels, rows, cols),
                                                           (self.n_hidden, channels, self.filter_size, self.filter_size),
                                                           pad=self.pad, stride=self.stride)
-        if self.pool_type == 'pool':
-            pool_op = pool_cpu
-        elif self.pool_type == 'fp':
-            pool_op = fp_cpu
-        else:
-            raise NameError
         self.filters = []
-        self.cccps = []
         output = []
         for ch in xrange(channels):
             oneChannel = inputX[:, [ch], :, :]
@@ -438,24 +419,14 @@ class ELMAEPoolLayer(Layer):
             patches = np.dot(patches, beta)
             patches = patches.reshape((batches, orows, ocols, -1)).transpose((0, 3, 1, 2))
             myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmraw')
-            # 池化
-            patches = pool_op(patches, self.pool_size, mode=self.mode)
-            myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmpool')
             # 归一化
-            patches = norm4d(patches)
-            myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmnorm')
+            # patches = norm4d(patches)
+            # myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmnorm')
             # 激活
             patches = relu(patches)
             myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmrelu')
-            # 归一化
-            patches = norm4d(patches)
-            myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmnorm')
-            # 添加cccp层组合
-            cccp = CCCPLayer(C=self.C, n_out=self.cccp_out, noise_level=self.cccp_noise_level)
-            # patches = cccp.get_train_output_for(patches)
             output = np.concatenate([output, patches], axis=1) if len(output) != 0 else patches
             self.filters.append(beta)
-            self.cccps.append(deepcopy(cccp))
             print ch,
             gc.collect()
         return output
@@ -465,12 +436,6 @@ class ELMAEPoolLayer(Layer):
         _, _, orows, ocols = myUtils.basic.conv_out_shape((batches, channels, rows, cols),
                                                           (self.n_hidden, channels, self.filter_size, self.filter_size),
                                                           pad=self.pad, stride=self.stride)
-        if self.pool_type == 'pool':
-            pool_op = pool_cpu
-        elif self.pool_type == 'fp':
-            pool_op = fp_cpu
-        else:
-            raise NameError
         output = []
         for ch in xrange(channels):
             oneChannel = inputX[:, [ch], :, :]
@@ -483,22 +448,226 @@ class ELMAEPoolLayer(Layer):
             patches = np.dot(patches, self.filters[ch])
             patches = patches.reshape((batches, orows, ocols, -1)).transpose((0, 3, 1, 2))
             myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmrawte')
-            # 池化
-            patches = pool_op(patches, self.pool_size, mode=self.mode)
-            myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmpoolte')
             # 归一化
-            patches = norm4d(patches)
-            myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmnormte')
+            # patches = norm4d(patches)
+            # myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmnormte')
             # 激活
             patches = relu(patches)
             myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmrelute')
-            # 归一化
-            patches = norm4d(patches)
-            myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmnorm')
-            # 添加cccp层组合
-            # patches = self.cccps[ch].get_test_output_for(patches)
             output = np.concatenate([output, patches], axis=1) if len(output) != 0 else patches
             print ch,
+            gc.collect()
+        return output
+
+
+def im2col_catch(inputX, fsize, stride, pad):
+    assert inputX.ndim == 4
+    patches = []
+    for ch in xrange(inputX.shape[1]):
+        patches1ch = im2col(inputX[:, [0], :, :], fsize, stride, pad)
+        inputX = inputX[:, 1:, :, :]
+        patches = np.concatenate([patches, patches1ch], axis=1) if len(patches) != 0 else patches1ch
+    return patches
+
+
+# 将所有通道同一位置的patch全部串联
+class ELMAECrossAllLayer(Layer):
+    def __init__(self, C, n_hidden, filter_size, pad, stride, pad_, stride_, noise_level):
+        self.C = C
+        self.n_hidden = n_hidden
+        self.filter_size = filter_size
+        self.stride = stride
+        self.pad = pad
+        self.stride_ = stride_
+        self.pad_ = pad_
+        self.noise_level = noise_level
+
+    def _get_beta(self, inputX, bias_scale=25):
+        assert inputX.ndim == 4
+        # 生成随机正交滤波器
+        W, b = normal_random(input_unit=inputX.shape[1] * self.filter_size ** 2, hidden_unit=self.n_hidden)
+        W = orthonormalize(W)  # 正交后的幅度在-1~+1之间
+        # 将所有输入的通道的patch串联
+        patches = im2col_catch(inputX, self.filter_size, stride=self.stride_, pad=self.pad_)
+        del inputX
+        ##########################
+        patches = norm2d(patches)
+        # patches, self.mean1, self.P1 = whiten2d(patches)
+        ##########################
+        # 在patches上加噪
+        noise_patches = np.copy(patches)
+        noise_patches = add_noise_decomp(noise_patches, add_mn, self.noise_level)
+        # noisePatch = add_mn_row(patches, p=0.25)
+        # noisePatch = add_sp(patches, p=0.25)
+        # noisePatch = add_gs(patches, p=0.25)
+        hiddens = np.dot(noise_patches, W)
+        del noise_patches
+        hmax, hmin = np.max(hiddens, axis=0), np.min(hiddens, axis=0)
+        scale = (hmax - hmin) / (2 * bias_scale)
+        hiddens += b * scale
+        hiddens = relu(hiddens)
+        # 计算beta
+        beta = compute_beta_direct(hiddens, patches)
+        beta = beta.T
+        return beta
+
+    def get_train_output_for(self, inputX):
+        batches, channels, rows, cols = inputX.shape
+        _, _, orows, ocols = myUtils.basic.conv_out_shape((batches, channels, rows, cols),
+                                                          (self.n_hidden, channels, self.filter_size, self.filter_size),
+                                                          pad=self.pad, stride=self.stride)
+        self.beta = self._get_beta(inputX)
+        myUtils.visual.save_beta_mch(self.beta, channels, dir_name, 'beta')
+        patches = im2col_catch(inputX, self.filter_size, stride=self.stride, pad=self.pad)
+        del inputX
+        ##########################
+        patches = norm2d(patches)
+        # patches = whiten2d(patches, self.mean1, self.P1)
+        ##########################
+        patches = np.dot(patches, self.beta)
+        patches = patches.reshape((batches, orows, ocols, -1)).transpose((0, 3, 1, 2))
+        myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmraw')
+        # 归一化
+        # patches = norm4d(patches)
+        # myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmnorm')
+        # 激活
+        patches = relu(patches)
+        myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmrelu')
+        return patches
+
+    def get_test_output_for(self, inputX):
+        batches, channels, rows, cols = inputX.shape
+        _, _, orows, ocols = myUtils.basic.conv_out_shape((batches, channels, rows, cols),
+                                                          (self.n_hidden, channels, self.filter_size, self.filter_size),
+                                                          pad=self.pad, stride=self.stride)
+        patches = im2col_catch(inputX, self.filter_size, stride=self.stride, pad=self.pad)
+        del inputX
+        ##########################
+        patches = norm2d(patches)
+        # patches = whiten2d(patches, self.mean1, self.P1)
+        ##########################
+        patches = np.dot(patches, self.beta)
+        patches = patches.reshape((batches, orows, ocols, -1)).transpose((0, 3, 1, 2))
+        myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmrawte')
+        # 归一化
+        # patches = norm4d(patches)
+        # myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmnormte')
+        # 激活
+        patches = relu(patches)
+        myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmrelute')
+        return patches
+
+
+# 将part_size个通道同一位置的patch串联
+class ELMAECrossPartLayer(Layer):
+    def __init__(self, C, n_hidden, filter_size, pad, stride, pad_, stride_, noise_level, cross_size):
+        self.C = C
+        self.n_hidden = n_hidden
+        self.filter_size = filter_size
+        self.stride = stride
+        self.pad = pad
+        self.stride_ = stride_
+        self.pad_ = pad_
+        self.noise_level = noise_level
+        self.cross_size = cross_size
+
+    def _get_beta(self, partX, bias_scale=25):
+        assert partX.ndim == 4
+        # 生成随机正交滤波器
+        W, b = normal_random(input_unit=partX.shape[1] * self.filter_size ** 2, hidden_unit=self.n_hidden)
+        W = orthonormalize(W)  # 正交后的幅度在-1~+1之间
+        # 将所有输入的通道的patch串联
+        patches = im2col_catch(partX, self.filter_size, stride=self.stride_, pad=self.pad_)
+        del partX
+        ##########################
+        patches = norm2d(patches)
+        # patches, self.mean1, self.P1 = whiten2d(patches)
+        ##########################
+        # 在patches上加噪
+        noise_patches = np.copy(patches)
+        noise_patches = add_noise_decomp(noise_patches, add_mn, self.noise_level)
+        # noisePatch = add_mn_row(patches, p=0.25)
+        # noisePatch = add_sp(patches, p=0.25)
+        # noisePatch = add_gs(patches, p=0.25)
+        hiddens = np.dot(noise_patches, W)
+        del noise_patches
+        hmax, hmin = np.max(hiddens, axis=0), np.min(hiddens, axis=0)
+        scale = (hmax - hmin) / (2 * bias_scale)
+        hiddens += b * scale
+        hiddens = relu(hiddens)
+        # 计算beta
+        beta = compute_beta_direct(hiddens, patches)
+        beta = beta.T
+        return beta
+
+    def get_train_output_for(self, inputX):
+        batches, channels, rows, cols = inputX.shape
+        _, _, orows, ocols = myUtils.basic.conv_out_shape((batches, channels, rows, cols),
+                                                          (self.n_hidden, channels, self.filter_size, self.filter_size),
+                                                          pad=self.pad, stride=self.stride)
+        # 将输入按照通道分为多个组,每个组学习一个beta
+        self.filters = []
+        output = []
+        startRange = range(0, channels - self.cross_size + 1, self.cross_size)
+        endRange = range(self.cross_size, channels + 1, self.cross_size)
+        if channels % self.cross_size != 0:
+            startRange.append(channels - channels % self.cross_size)
+            endRange.append(channels)
+        for start, end in zip(startRange, endRange):
+            partX = inputX[:, start:end, :, :]
+            beta = self._get_beta(partX)
+            myUtils.visual.save_beta_mch(beta, self.cross_size, dir_name, 'beta')
+            patches = im2col_catch(partX, self.filter_size, stride=self.stride, pad=self.pad)
+            del partX
+            ##########################
+            patches = norm2d(patches)
+            # patches = whiten2d(patches, self.mean1, self.P1)
+            ##########################
+            patches = np.dot(patches, beta)
+            patches = patches.reshape((batches, orows, ocols, -1)).transpose((0, 3, 1, 2))
+            myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmraw')
+            # 归一化
+            # patches = norm4d(patches)
+            # myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmnorm')
+            # 激活
+            patches = relu(patches)
+            myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmrelu')
+            output = np.concatenate([output, patches], axis=1) if len(output) != 0 else patches
+            self.filters.append(beta)
+            print start, '~', end,
+            gc.collect()
+        return output
+
+    def get_test_output_for(self, inputX):
+        batches, channels, rows, cols = inputX.shape
+        _, _, orows, ocols = myUtils.basic.conv_out_shape((batches, channels, rows, cols),
+                                                          (self.n_hidden, channels, self.filter_size, self.filter_size),
+                                                          pad=self.pad, stride=self.stride)
+        output = []
+        startRange = range(0, channels - self.cross_size + 1, self.cross_size)
+        endRange = range(self.cross_size, channels + 1, self.cross_size)
+        if channels % self.cross_size != 0:
+            startRange.append(channels - channels % self.cross_size)
+            endRange.append(channels)
+        numRange = range(len(startRange))
+        for num, start, end in zip(numRange, startRange, endRange):
+            partX = inputX[:, start:end, :, :]
+            patches = im2col_catch(partX, self.filter_size, stride=self.stride, pad=self.pad)
+            ##########################
+            patches = norm2d(patches)
+            # patches = whiten2d(patches, self.mean1, self.P1)
+            ##########################
+            patches = np.dot(patches, self.filters[num])
+            patches = patches.reshape((batches, orows, ocols, -1)).transpose((0, 3, 1, 2))
+            myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmrawte')
+            # 归一化
+            # patches = norm4d(patches)
+            # myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmnormte')
+            # 激活
+            patches = relu(patches)
+            myUtils.visual.save_map(patches[[10, 100, 1000]], dir_name, 'elmrelute')
+            output = np.concatenate([output, patches], axis=1) if len(output) != 0 else patches
+            print start, '~', end,
             gc.collect()
         return output
 
@@ -558,13 +727,13 @@ class BNLayer(Layer):
         self.mean = None
         self.var = None
 
-    def get_train_output_for(self, inputX, regularization=10):
+    def get_train_output_for(self, inputX, regularization=1e-5):
         # 每个特征在整个训练集上归一化
         self.mean = np.mean(inputX, axis=(0, 2, 3), keepdims=True)
         self.var = np.var(inputX, axis=(0, 2, 3), keepdims=True)
         return (inputX - self.mean) / np.sqrt(self.var + regularization)
 
-    def get_test_output_for(self, inputX, regularization=10):
+    def get_test_output_for(self, inputX, regularization=1e-5):
         return (inputX - self.mean) / np.sqrt(self.var + regularization)
 
 
@@ -800,31 +969,36 @@ class LRFELMAE(object):
         net = OrderedDict()
         net['gcn0'] = GCNLayer()
         # layer1
-        net['layer1'] = ELMAEPoolLayer(C=self.C, n_hidden=17, filter_size=6, pad=0, stride=1, pad_=None, stride_=2,
-                                       noise_level=0.15, pool_type='pool', pool_size=(2, 2), mode='max',
-                                       cccp_out=17, cccp_noise_level=0.1)
+        net['layer1'] = ELMAECrossAllLayer(C=self.C, n_hidden=16, filter_size=6, pad=0, stride=1,
+                                           pad_=None, stride_=2, noise_level=0.15)
+        # net['pool1'] = PoolLayer(pool_size=(2, 2), mode='max')
+        net['pool1'] = L2PoolLayer(pool_size=(2, 2), pool_type='pool')
+        # net['fmp1'] = FPLayer(pool_ratio=1.414, mode='max')
         # net['gcn11'] = GCNLayer()
-        # net['cccp1'] = CCCPLayer(C=self.C, n_out=64, noise_level=0.2)
-        # net['gcn12'] = GCNLayer()
+        # net['cccp1'] = CCCPLayer(C=self.C, n_out=16, noise_level=0.25)
+        net['gcn12'] = GCNLayer()
         # layer2
-        net['layer2'] = ELMAEPoolLayer(C=self.C, n_hidden=17, filter_size=6, pad=0, stride=1, pad_=None, stride_=1,
-                                       noise_level=0.15, pool_type='pool', pool_size=(2, 2), mode='max',
-                                       cccp_out=289, cccp_noise_level=0.1)
+        net['layer2'] = ELMAECrossPartLayer(C=self.C, n_hidden=16, filter_size=6, pad=0, stride=1,
+                                            pad_=None, stride_=1, noise_level=0.15, cross_size=4)
+        # net['pool2'] = PoolLayer(pool_size=(3, 3), mode='max')
+        net['pool2'] = L2PoolLayer(pool_size=(2, 2), pool_type='pool')
+        # net['fmp2'] = FPLayer(pool_ratio=1.414, mode='max')
         # net['gcn21'] = GCNLayer()
-        # net['cccp2'] = CCCPLayer(C=self.C, n_out=289, noise_level=0.2)
-        # net['gcn22'] = GCNLayer()
+        # net['cccp2'] = CCCPLayer(C=self.C, n_out=256, noise_level=0.25)
+        net['gcn22'] = GCNLayer()
         # layer3
-        # net['layer3'] = ELMAEPoolLayer(C=self.C, n_hidden=14, filter_size=5, pad=2, stride=1, pad_=None, stride_=1,
-        #                                noise_level=0.2, pool_type='pool', pool_size=(3, 3), mode='average_exc_pad',
-        #                                cccp_out=2)
+        # net['layer3'] = ELMAELayer(C=self.C, n_hidden=64, filter_size=5, pad=2, stride=1,
+        #                            pad_=None, stride_=1, noise_level=0.25)
         # net['bn3'] = BNLayer()
-        # net['cccp2'] = CCCPLayer(C=self.C, n_out=32, noise_level=0.2)
-        # net['bn3'] = BNLayer()
-        # net['pool'] = PoolLayer(pool_size=(3, 3), mode='average_exc_pad')
-        # # layer4
-        # net['layer4'] = ELMAEPoolLayer(C=self.C, n_hidden=68, filter_size=7, stride=1,
-        #                                noise_level=0.25, pool_size=(2, 2))
+        # # net['zca3'] = ZCAWhitenLayer()
+        # net['pool3'] = PoolLayer(pool_size=(2, 2), mode='average_exc_pad')
+        # # net['fmp3'] = FPLayer(pool_ratio=1.414)
+        # layer4
+        # net['layer4'] = ELMAELayer(C=self.C, n_hidden=68, filter_size=7, stride=1, stride_=1, noise_level=0.25)
         # net['bn4'] = BNLayer()
+        # # net['zca4'] = ZCAWhitenLayer()
+        # # net['pool4'] = PoolLayer(pool_size=(2, 2))
+        # net['fmp4'] = FPLayer(pool_ratio=1.414)
         # net['cccp'] = CCCPLayer(C=self.C, n_out=32, noise_level=0.25)  # 降维
         return net
 
@@ -845,25 +1019,25 @@ class LRFELMAE(object):
         self.net = self._build()
         netout = self._get_train_output(self.net, inputX)
         netout = netout.reshape((netout.shape[0], -1))
-        self.classifier = Classifier_cv(n_rep=2, C_range=10 ** np.arange(-2., 3., 1.), times_range=[7, ])
-        return self.classifier.train_cv(netout, inputy)
+        self.classifier = Classifier_cv(n_rep=2, C_range=10 ** np.arange(-4., 2., 1.), times_range=[5, 7])
+        self.classifier.train_cv(netout, inputy)
 
     def test(self, inputX, inputy):
         netout = self._get_test_output(self.net, inputX)
         netout = netout.reshape((netout.shape[0], -1))
-        return self.classifier.test_cv(netout, inputy)
+        self.classifier.test_cv(netout, inputy)
 
 
 def main():
-    tr_X, te_X, tr_y, te_y = myUtils.load.mnist(onehot=True)
-    tr_X = myUtils.pre.norm4d_per_sample(tr_X)
-    te_X = myUtils.pre.norm4d_per_sample(te_X)
+    # tr_X, te_X, tr_y, te_y = myUtils.load.mnist(onehot=True)
+    # tr_X = myUtils.pre.norm4d_per_sample(tr_X)
+    # te_X = myUtils.pre.norm4d_per_sample(te_X)
     # tr_X, te_X, tr_y, te_y = myUtils.pre.cifarWhiten('cifar10')
     # tr_y = myUtils.load.one_hot(tr_y, 10)
     # te_y = myUtils.load.one_hot(te_y, 10)
-    # tr_X, te_X, tr_y, te_y = myUtils.load.cifar(onehot=True)
-    # tr_X = myUtils.pre.norm4d_per_sample(tr_X, scale=55.)
-    # te_X = myUtils.pre.norm4d_per_sample(te_X, scale=55.)
+    tr_X, te_X, tr_y, te_y = myUtils.load.cifar(onehot=True)
+    tr_X = myUtils.pre.norm4d_per_sample(tr_X, scale=55.)
+    te_X = myUtils.pre.norm4d_per_sample(te_X, scale=55.)
     model = LRFELMAE(C=None)
     model.train(tr_X, tr_y)
     model.test(te_X, te_y)
