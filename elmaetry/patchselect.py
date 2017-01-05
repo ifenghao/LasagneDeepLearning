@@ -18,7 +18,7 @@
 # import myUtils
 #
 #
-# def compute_beta(Hmat, Tmat, C):
+# def compute_beta_reg(Hmat, Tmat, C):
 #     rows, cols = Hmat.shape
 #     if rows <= cols:
 #         beta = np.dot(Hmat.T, solve(np.eye(rows) / C + np.dot(Hmat, Hmat.T), Tmat))
@@ -100,7 +100,7 @@
 #     # randChannel = inputX[batchindex, channelindex, :, :].reshape((batches, 1, rows, cols))
 #     patches = im2col(oneChannel, filter_size, stride=stride, pad=pad)
 #     # 计算beta
-#     beta1 = compute_beta(hiddens, patches, 1)
+#     beta1 = compute_beta_reg(hiddens, patches, 1)
 #
 #     # 卷积前向输出，和取patch时一致
 #     pad = 0
@@ -113,7 +113,7 @@
 #     # randChannel = inputX[batchindex, channelindex, :, :].reshape((batches, 1, rows, cols))
 #     patches = im2col(oneChannel, filter_size, stride=stride, pad=pad)
 #     # 计算beta
-#     beta2 = compute_beta(hiddens, patches, 1)
+#     beta2 = compute_beta_reg(hiddens, patches, 1)
 #
 #     return beta1,beta2
 

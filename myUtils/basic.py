@@ -70,7 +70,7 @@ def accuracy(yProb, y):
     return T.mean(T.eq(yProb, y))
 
 
-def conv_out_shape(inputShape, filterShape, pad, stride):
+def conv_out_shape(inputShape, filterShape, pad, stride, ignore_border=False):
     batch, channel, mapRow, mapCol = inputShape
     channelout, channelin, filterRow, filterCol = filterShape
     assert channel == channelin
@@ -84,7 +84,11 @@ def conv_out_shape(inputShape, filterShape, pad, stride):
         rowStride = colStride = stride
     mapRow += 2 * rowPad
     mapCol += 2 * colPad
-    outRow, outCol = (mapRow - filterRow) // rowStride + 1, (mapCol - filterCol) // colStride + 1
+    outRow = (mapRow - filterRow) // rowStride + 1
+    outCol = (mapCol - filterCol) // colStride + 1
+    if not ignore_border:
+        outRow += (mapRow - filterRow) % rowStride
+        outCol += (mapCol - filterCol) % colStride
     return batch, channelout, outRow, outCol
 
 

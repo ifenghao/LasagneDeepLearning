@@ -579,10 +579,10 @@ import myUtils
 #     bias = np.random.uniform(low=-ranges, high=ranges, size=hidden_unit)
 #     return filters, bias
 
-x = 22
-for i in range(10):
-    x = int(float(x) / 2.1)
-    print x
+# x = 12
+# for i in range(5):
+#     x = int(float(x) / 1.6)
+#     print x
 
 # x=np.random.rand(10,5)
 # c=np.cov(x,rowvar=0)
@@ -781,3 +781,190 @@ for i in range(10):
 #
 # print np.arange(100).reshape((10,10)),get_neib_idx(4,4,10,10)
 
+
+# x = np.zeros((5, 36, 23, 23))
+# block_list = [(8, 8), (7, 7),(15,15)]
+# batches, channels, orows, ocols = x.shape
+# x = x.reshape((5, 36, -1))
+# oidx = np.arange(orows * ocols).reshape((1, 1, orows, ocols))
+# block_list.sort(lambda x,y:np.prod(x)-np.prod(y))
+# # block_list = filter(lambda x: x[0] * x[1]*len(block_list) < orows * ocols * 0.5, block_list)
+# length=len(block_list)
+# for _ in xrange(length): # 将不符合的大block剔除掉
+#     block=block_list[-1]
+#     if block[0]*block[1]*length<=orows * ocols * 0.5: break
+#     block_list.pop(-1)
+#     length-=1
+# equal_size = orows * ocols * 0.5 / float(len(block_list))
+# for block_row, block_col in block_list:
+#     onemap_blocks = int(round(equal_size / (block_row * block_col)))
+#     total_blocks = channels * onemap_blocks
+#     row_stride = row_stride_tmp = 1
+#     col_stride = col_stride_tmp = 1
+#     while True:
+#         array_row = (orows - block_row) // row_stride_tmp + 1
+#         array_col = (ocols - block_col) // col_stride_tmp + 1
+#         if array_row * array_col < total_blocks: break
+#         row_stride = row_stride_tmp
+#         col_stride = col_stride_tmp
+#         if row_stride_tmp < col_stride_tmp:
+#             row_stride_tmp += 1
+#         else:
+#             col_stride_tmp += 1
+#     array_row = (orows - block_row) // row_stride + 1
+#     array_col = (ocols - block_col) // col_stride + 1
+#     array_idx = im2col(oidx, (block_row, block_col), (row_stride, col_stride), 0, ignore_border=True)
+#     array_idx = array_idx.astype(int)
+#     ch_idx = np.repeat(np.arange(channels), onemap_blocks * block_row * block_col)
+#     for b in xrange(batches):# 不同样本不同噪声
+#         idx_for_array_idx = np.random.permutation(array_row * array_col)[:total_blocks]
+#         if array_row * array_col < total_blocks:
+#             times = np.ceil(float(total_blocks) / (array_row * array_col))
+#             idx_for_array_idx = np.random.permutation(np.tile(idx_for_array_idx, times)[:total_blocks])
+#         map_idx = array_idx[idx_for_array_idx].reshape(-1)
+#         x[b][ch_idx, map_idx] = 1.
+#         tmp = x[b].reshape((36, 23, 23)).astype(int)
+#         # split_idx=np.split(rand_idx_idx, channels)
+#         # for ch, idx in enumerate(split_idx):
+#         #     ch_array_idx=array_idx[idx].reshape(-1)
+#         #     x[b][ch][ch_array_idx] = 1.
+#         #     print x[b][ch].reshape((23,23)).astype(int)
+
+# from theano.sandbox.neighbours import images2neibs
+# from lasagne.theano_extensions.padding import pad as lasagnepad
+#
+#
+# def im2col(inputX, fsize, stride, pad, ignore_border=False):
+#     assert inputX.ndim == 4
+#     if isinstance(fsize, (int, float)): fsize = (int(fsize), int(fsize))
+#     if isinstance(stride, (int, float)): stride = (int(stride), int(stride))
+#     Xrows, Xcols = inputX.shape[-2:]
+#     X = T.tensor4()
+#     if not ignore_border:  # 保持下和右的边界
+#         rowpad = colpad = 0
+#         rowrem = (Xrows - fsize[0]) % stride[0]
+#         if rowrem: rowpad = stride[0] - rowrem
+#         colrem = (Xcols - fsize[1]) % stride[1]
+#         if colrem: colpad = stride[1] - colrem
+#         pad = ((0, rowpad), (0, colpad))
+#     Xpad = lasagnepad(X, pad, batch_ndim=2)
+#     neibs = images2neibs(Xpad, fsize, stride, 'ignore_borders')
+#     im2colfn = theano.function([X], neibs, allow_input_downcast=True)
+#     return im2colfn(inputX)
+#
+# class MNArray(object):
+#     def __init__(self, percent, block_list):
+#         self.percent = percent
+#         self.block_list = block_list
+#
+#     def _scat_stride(self, blockr, blockc, total_blocks):
+#         strider = strider_tmp = 1
+#         stridec = stridec_tmp = 1
+#         while True:
+#             arrayr = (self.orows - blockr) // strider_tmp + 1
+#             arrayc = (self.ocols - blockc) // stridec_tmp + 1
+#             if arrayr * arrayc < total_blocks: break
+#             strider = strider_tmp
+#             stridec = stridec_tmp
+#             if strider_tmp < stridec_tmp:
+#                 strider_tmp += 1
+#             else:
+#                 stridec_tmp += 1
+#         return strider, stridec
+#
+#     def _assign_ch_idx_permap(self, channels, block_size, n_blocks):
+#         ch_idx = np.repeat(np.arange(channels), n_blocks * block_size)
+#         return ch_idx
+#
+#     def _assign_ch_idx_uniform(self, channels, block_size, n_blocks):
+#         ch_idx = np.random.permutation(channels)[:n_blocks]
+#         if channels < n_blocks:
+#             times = np.ceil(float(n_blocks) / channels)
+#             ch_idx = np.tile(ch_idx, times)[:n_blocks]
+#         ch_idx.sort()
+#         ch_idx = np.repeat(ch_idx, block_size)
+#         return ch_idx
+#
+#     def _assign_ch_idx_rand(self, channels, block_size, n_blocks):
+#         ch_idx = np.random.randint(0, channels, n_blocks)
+#         ch_idx.sort()
+#         ch_idx = np.repeat(ch_idx, block_size)
+#         return ch_idx
+#
+#     def _assign_onemap_idx(self, array_idx, array_size, n_blocks):
+#         idx_for_array_idx = np.random.permutation(array_size)[:n_blocks]  # 一定要均匀的分配map索引
+#         if array_size < n_blocks:
+#             times = np.ceil(float(n_blocks) / (array_size))
+#             idx_for_array_idx = np.random.permutation(np.tile(idx_for_array_idx, times)[:n_blocks])
+#         map_idx = array_idx[idx_for_array_idx].reshape(-1)
+#         return map_idx
+#
+#     def _add_per_map(self, X, percent, block_list):
+#         assert X.ndim == 3
+#         equal_size = self.orows * self.ocols * percent / float(len(block_list))
+#         for blockr, blockc in block_list:
+#             map_blocks = int(round(equal_size / (blockr * blockc)))
+#             total_blocks = self.channels * map_blocks
+#             strider, stridec = self._scat_stride(blockr, blockc, total_blocks)
+#             arrayr = (self.orows - blockr) // strider + 1
+#             arrayc = (self.ocols - blockc) // stridec + 1
+#             array_idx = im2col(self.oidx, (blockr, blockc), (strider, stridec), 0, ignore_border=True).astype(int)
+#             for b in xrange(self.batches):  # 不同样本不同噪声
+#                 ch_idx = self._assign_ch_idx_permap(self.channels, blockr * blockc, map_blocks)
+#                 map_idx = self._assign_onemap_idx(array_idx, arrayr * arrayc, total_blocks)
+#                 X[b][ch_idx, map_idx] = 0.
+#         return X
+#
+#     def _add_cross_ch(self, X, percent, block_list):
+#         assert X.ndim == 3
+#         equal_size = self.channels * self.orows * self.ocols * percent / float(len(block_list))
+#         for blockr, blockc in block_list:
+#             total_blocks = int(round(equal_size / (blockr * blockc)))
+#             strider, stridec = self._scat_stride(blockr, blockc, total_blocks)  # 尝试最分散的stride
+#             arrayr = (self.orows - blockr) // strider + 1  # 不考虑边界
+#             arrayc = (self.ocols - blockc) // stridec + 1
+#             array_idx = im2col(self.oidx, (blockr, blockc), (strider, stridec), 0, ignore_border=True).astype(int)
+#             for b in xrange(self.batches):  # 不同样本不同噪声
+#                 ch_idx = self._assign_ch_idx_rand(self.channels, blockr * blockc, total_blocks)
+#                 map_idx = self._assign_onemap_idx(array_idx, arrayr * arrayc, total_blocks)
+#                 X[b][ch_idx, map_idx] = 0.
+#         return X
+#
+#     def _add_cross_batch(self, X, percent, block_list):
+#         assert X.ndim == 3
+#         X = X.reshape((-1, self.orows * self.ocols))
+#         equal_size = self.channels * self.orows * self.ocols * percent / float(len(block_list))
+#         for blockr, blockc in block_list:
+#             total_blocks = int(round(equal_size / (blockr * blockc)))
+#             strider, stridec = self._scat_stride(blockr, blockc, total_blocks)  # 尝试最分散的stride
+#             arrayr = (self.orows - blockr) // strider + 1  # 不考虑边界
+#             arrayc = (self.ocols - blockc) // stridec + 1
+#             array_idx = im2col(self.oidx, (blockr, blockc), (strider, stridec), 0, ignore_border=True).astype(int)
+#             channels = self.batches * self.channels
+#             total_blocks *= self.batches
+#             ch_idx = self._assign_ch_idx_rand(channels, blockr * blockc, total_blocks)
+#             map_idx = self._assign_onemap_idx(array_idx, arrayr * arrayc, total_blocks)
+#             X[ch_idx, map_idx] = 0.
+#             tmp=X.reshape((-1, self.orows, self.ocols))
+#             pass
+#         return X
+#
+#     def apply(self, X):
+#         assert X.ndim == 4
+#         Xshape = X.shape
+#         self.batches, self.channels, self.orows, self.ocols = Xshape
+#         self.oidx = np.arange(self.orows * self.ocols).reshape((1, 1, self.orows, self.ocols))
+#         X = X.reshape((self.batches, self.channels, -1))
+#         self.block_list = filter(lambda x: x[0] < self.orows and x[1] < self.ocols, self.block_list)
+#         X = self._add_cross_batch(X, self.percent, self.block_list)
+#         X = X.reshape(Xshape)
+#         return X
+#
+#
+# def add_mn_array(X, percent=0.5, block_list=((1, 1), (2, 2))):
+#     mn_array=MNArray(percent, block_list)
+#     X=mn_array.apply(X)
+#     return X
+#
+# x = np.ones((5, 36, 23, 23))
+# x=add_mn_array(x,0.5, ((5,5),(7,7),(15,15)))
